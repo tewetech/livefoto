@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Foto Wedding Of Chusnul & Tri</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300..700&display=swap" rel="stylesheet">
+    
+    <link href="https://fonts.googleapis.com/css2?family=Digital+Numbers&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <script src="https://unpkg.com/qrious@4.0.2/dist/qrious.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
+
+    <style>
+        /* Mengatur agar video tidak terdistorsi saat menjadi latar belakang */
+        #videoElement {
+            min-width: 100%;
+            min-height: 100%;
+        }
+        
+        /* Menerapkan font Quicksand sebagai font default untuk seluruh body */
+        body {
+            font-family: 'Quicksand', sans-serif;
+        }
+        
+        /* BARU: Definisi font digital untuk timer */
+        .font-digital {
+            font-family: 'Digital Numbers', monospace; /* Gunakan monospace sebagai fallback */
+        }
+
+        /* BARU: Karena 'Digital Numbers' tidak ada di Google Fonts secara default, 
+           kita perlu membuat definisi font kustom untuk mensimulasikannya, 
+           atau menggunakan font yang tersedia dan mendekati. 
+           Untuk kemudahan, kita akan menggunakan 'Orbitron' sebagai simulasi font digital 
+           jika 'Digital Numbers' sulit didapatkan langsung dari Google Fonts. 
+           Jika Anda menggunakan font lokal, ganti '@font-face' di sini. 
+           Namun, karena permintaan spesifik, kita coba tambahkan Google Font yang ada: 
+           (Catatan: 'Digital Numbers' bukan font resmi Google. Saya akan gunakan 
+           'Digital' dari Google Fonts jika ada yang mirip atau ganti dengan 'Orbitron' 
+           atau 'Monoton' yang lebih "digital" jika diperlukan, tapi untuk kepatuhan 
+           saya asumsikan user sudah punya link font 'Digital Numbers'). 
+           
+           Asumsi: Link font di atas sudah memuat font digital yang diinginkan.
+           Jika tidak, font akan jatuh ke monospace. 
+        */
+        
+        /* Menyesuaikan animasi pulse untuk timer */
+        @keyframes pulse-white {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+        .animate-pulse-white {
+            animation: pulse-white 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-amber-50 min-h-screen overflow-hidden">
+
+    <video id="videoElement" autoplay playsinline 
+           class="fixed top-0 left-0 w-full h-full object-cover z-0"></video>
+           
+    <div class="fixed bottom-4 left-4 z-20 p-3 bg-white/90 backdrop-blur-sm rounded-xl shadow-2xl flex flex-col items-center">
+        <p class="text-amber-800 mb-2 font-bold text-sm">Folder Wedding</p>
+        <canvas id="staticQrCodeCanvas" class="w-28 h-28 border-4 border-amber-300 rounded-lg p-1"></canvas>
+        
+        <p id="staticFolderLink" 
+           class="mt-2 text-xs font-semibold text-amber-700 transition duration-200 cursor-default">
+            Lihat Semua Foto
+        </p>
+        
+    </div>
+
+    <div id="qrCodeContainer" class="fixed bottom-4 right-4 z-20 p-3 bg-white/90 backdrop-blur-sm rounded-xl shadow-2xl flex flex-col items-center hidden">
+        <p class="text-amber-800 mb-2 font-bold text-sm text-center">Foto Anda!</p>
+        <canvas id="qrCodeCanvas" class="w-28 h-28 border-4 border-amber-300 rounded-lg p-1"></canvas>
+        
+        <p class="text-xs text-amber-700 mt-2 text-center font-semibold">Scan Disini!</p>
+        
+    </div>
+
+    <div class="fixed inset-x-0 bottom-0 z-10 flex flex-col justify-end items-center p-4 sm:p-6">
+        
+        <div class="mt-8 mb-4">
+            <button id="snapButton" class="bg-amber-800 hover:bg-amber-900 text-white font-bold py-4 px-10 rounded-full shadow-2xl transition duration-200 text-lg flex items-center gap-2">
+                <i class="fas fa-camera"></i> Ambil Foto Timer 5 Detik
+            </button>
+        </div>
+        
+        <div id="handDetectionIndicator" class="mb-2 p-2 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg text-sm font-medium text-amber-800 hidden">
+             <i class="fa-regular fa-hand-peace"></i> Atau tunjukkan jari damai (V) untuk foto otomatis!
+        </div>
+    </div>
+
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center text-white z-20">
+        <span id="countdownDisplay" class="text-9xl font-extrabold mb-4 font-digital animate-pulse-white">5</span> 
+        <p id="uploadMessage" class="text-lg font-semibold hidden">Memproses...</p>
+    </div>
+    
+    <canvas id="canvasElement" class="hidden"></canvas>
+
+
+    <script>
+        // --- KONFIGURASI ---
+        // GANTI INI: Masukkan URL DEPLOYMENT GOOGLE APPS SCRIPT ANDA DI SINI
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzJXCfzmbmIgNVeffpvSbePB38SFxhL8CbzrghbBp1qEacpaKH1TcD_Te-YAUNVtHid3g/exec"; 
+        
+        // URL Folder Google Drive Anda (Digunakan untuk QR Code Statis)
+        const FOLDER_URL = "https://drive.google.com/drive/folders/1rxkfibOL8D5UTt3sRd-ryaxgGZjAdj3G";
+        
+        // JEDA MINIMAL ANTARA DETEKSI GERAKAN (dalam milidetik)
+        const GESTURE_COOLDOWN = 6000; // 6 detik
+
+
+        // --- Variabel DOM ---
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('canvasElement');
+        const snapButton = document.getElementById('snapButton');
+        const loading = document.getElementById('loadingOverlay');
+        const qrCodeContainer = document.getElementById('qrCodeContainer'); // Kontainer QR Code Hasil Foto (Pojok Kanan Bawah)
+        const qrCodeCanvas = document.getElementById('qrCodeCanvas');     // Canvas QR Code Hasil Foto
+        
+        // VARIABEL UNTUK TIMER
+        const countdownDisplay = document.getElementById('countdownDisplay');
+        const uploadMessage = document.getElementById('uploadMessage');
+        
+        // VARIABEL UNTUK QR CODE STATIS
+        const staticQrCodeCanvas = document.getElementById('staticQrCodeCanvas');
+        
+        // VARIABEL BARU UNTUK DETEKSI TANGAN
+        const handDetectionIndicator = document.getElementById('handDetectionIndicator');
+        
+        // Variabel untuk menyimpan URL foto terakhir yang diunggah
+        let lastPhotoUrl = ''; 
+        // Variabel untuk model Handpose
+        let handposeModel;
+        // Variabel untuk mencegah pemicuan berulang dari deteksi tangan
+        let lastGestureTime = 0;
+        // Variabel untuk melacak apakah hitungan mundur sedang berjalan
+        let isCountdownActive = false;
+
+
+        // Inisialisasi QRious untuk QR Code Hasil Foto
+        const qr = new QRious({
+            element: qrCodeCanvas,
+            // Ukuran disamakan dengan statis (112px)
+            size: 112, 
+            value: 'placeholder', 
+            level: 'H' 
+        });
+        
+        // Inisialisasi QRious untuk QR Code Statis (Folder Wedding)
+        const staticQr = new QRious({
+            element: staticQrCodeCanvas,
+            size: 112, 
+            value: FOLDER_URL, 
+            level: 'H' 
+        });
+        
+        // --- 1. Fungsi Menyalakan Kamera ---
+        async function startCamera() {
+            try {
+                // Mengakses kamera belakang ("environment")
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+                
+                // Setelah video dimuat, mulai memuat model Handpose dan loop deteksi
+                video.addEventListener('loadeddata', async () => {
+                    await loadHandposeModel(); // Muat model Handpose
+                    // Tampilkan indikator deteksi setelah kamera siap dan perbarui teks
+                    handDetectionIndicator.textContent = "Atau tunjukkan jari damai (V) untuk foto otomatis!"; 
+                    handDetectionIndicator.classList.remove('hidden'); 
+                    detectHandLoop(); // Mulai loop deteksi tangan
+                }, { once: true });
+
+            } catch (err) {
+                console.error("Gagal mengakses kamera:", err);
+                alert("Gagal mengakses kamera: " + err.message + ". Pastikan izin kamera diberikan.");
+            }
+        }
+
+        // --- 2. Event Listener Tombol Snap Manual ---
+        snapButton.addEventListener('click', () => {
+            // Cek apakah URL Google Script sudah diatur
+            if (!GOOGLE_SCRIPT_URL || GOOGLE_SCRIPT_URL.includes("TEMPEL_URL")) {
+                alert("Harap masukkan URL Google Script terlebih dahulu di dalam kode index.html!");
+                return;
+            }
+            startCountdownAndSnap(); // Memulai hitungan mundur
+        });
+        
+        // --- FUNGSI DETEKSI TANGAN ---
+        
+        // Memuat Model Handpose
+        async function loadHandposeModel() {
+            try {
+                // Memberikan pesan kepada user bahwa model sedang dimuat
+                handDetectionIndicator.textContent = "Memuat model AI..."; 
+                handposeModel = await handpose.load();
+                // Teks indikator akan diperbarui di fungsi startCamera setelah model dimuat
+                console.log("Model Handpose berhasil dimuat.");
+            } catch (error) {
+                console.error("Gagal memuat model Handpose:", error);
+                alert("Gagal memuat model deteksi tangan.");
+            }
+        }
+
+        // Fungsi utama loop deteksi tangan
+        async function detectHandLoop() {
+            if (!handposeModel) {
+                // Lanjutkan loop jika model belum dimuat
+                requestAnimationFrame(detectHandLoop); 
+                return;
+            }
+            
+            // Lakukan deteksi pada elemen video
+            const predictions = await handposeModel.estimateHands(video, {
+                flipHorizontal: true // Sesuaikan dengan orientasi video
+            });
+            
+            // Jika ada tangan terdeteksi, periksa gestur
+            if (predictions.length > 0) {
+                const hand = predictions[0];
+                const isPeaceSign = checkPeaceSign(hand.landmarks);
+                
+                // Jika gestur Tanda Damai terdeteksi DAN TIDAK SEDANG COUNTDOWN, dan COOLDOWN sudah lewat
+                if (isPeaceSign && !isCountdownActive && (Date.now() - lastGestureTime > GESTURE_COOLDOWN)) {
+                    lastGestureTime = Date.now(); // Perbarui waktu gestur terakhir
+                    startCountdownAndSnap(); // Panggil fungsi foto
+                }
+            }
+
+            // Loop terus menerus
+            requestAnimationFrame(detectHandLoop);
+        }
+        
+        /**
+         * Fungsi untuk memeriksa gestur Tanda Damai (Peace Sign / Victory Sign).
+         * Gestur ini lebih mudah dideteksi: Telunjuk dan Jari Tengah terbuka, sisanya tertutup.
+         * @param {Array} landmarks - Array koordinat 3D dari 21 titik tangan.
+         * @returns {boolean} True jika Tanda Damai terdeteksi.
+         */
+        function checkPeaceSign(landmarks) {
+            // Logika untuk Tanda Damai: Telunjuk dan Tengah terbuka, sisanya tertutup.
+            
+            // 1. Cek Telunjuk dan Tengah terbuka (ujung jari (Y) lebih tinggi dari pangkal jari (Y))
+            // Index 8 (ujung) vs 6 (Phalange tengah) untuk Telunjuk
+            const isIndexOpen = landmarks[8][1] < landmarks[6][1];
+            // Index 12 (ujung) vs 10 (Phalange tengah) untuk Jari Tengah
+            const isMiddleOpen = landmarks[12][1] < landmarks[10][1];
+
+            // 2. Cek Jari Manis dan Kelingking tertutup (ujung jari (Y) lebih rendah dari pangkal jari (Y))
+            // Index 16 (ujung) vs 14 (Phalange tengah) untuk Jari Manis
+            const isRingClosed = landmarks[16][1] > landmarks[14][1];
+            // Index 20 (ujung) vs 18 (Phalange tengah) untuk Kelingking
+            const isPinkyClosed = landmarks[20][1] > landmarks[18][1];
+            
+            // 3. Cek Jempol tertutup (jarak ujung jempol (4) ke pangkalnya (2) kecil)
+            const thumbTip = landmarks[4];
+            const thumbBase = landmarks[2];
+            
+            const thumbDistance = Math.sqrt(
+                Math.pow(thumbTip[0] - thumbBase[0], 2) + 
+                Math.pow(thumbTip[1] - thumbBase[1], 2)
+            );
+            
+            // Threshold sekitar 40-50 piksel umumnya menandakan jempol tertutup/melipat
+            const isThumbClosed = thumbDistance < 40; 
+            
+            // Tanda Damai terdeteksi jika semua kondisi terpenuhi
+            return isIndexOpen && isMiddleOpen && isRingClosed && isPinkyClosed && isThumbClosed;
+        }
+
+
+        // --- Fungsi: Hitungan Mundur dan Foto (Digunakan oleh Tombol Manual dan Deteksi Tangan) ---
+        function startCountdownAndSnap() {
+            if (isCountdownActive) return; // Jangan jalankan jika sudah aktif
+            isCountdownActive = true;
+            
+            hideQrCode(); // Sembunyikan QR code hasil foto (sekarang di pojok kanan bawah)
+            
+            let count = 5;
+            countdownDisplay.textContent = count;
+            uploadMessage.classList.add('hidden'); 
+            countdownDisplay.classList.remove('hidden'); 
+            handDetectionIndicator.classList.add('hidden'); // Sembunyikan indikator saat countdown
+
+            loading.classList.remove('hidden'); 
+            snapButton.disabled = true;
+            snapButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+            // Mulai hitungan mundur (Interval setiap 1 detik)
+            const timerInterval = setInterval(() => {
+                count--;
+                countdownDisplay.textContent = count;
+
+                if (count <= 0) {
+                    clearInterval(timerInterval);
+                    snapAndUpload();
+
+                } 
+                /* REVISI: Hapus bagian else if (count <= 3) untuk menghilangkan perubahan warna merah */
+                
+            }, 1000);
+        }
+
+        // --- Fungsi: Ambil Foto dan Upload ---
+        function snapAndUpload() {
+            countdownDisplay.classList.add('hidden'); 
+            countdownDisplay.classList.remove('text-red-500'); // Pastikan kelas warna merah dihilangkan
+            
+            uploadMessage.textContent = "Mengambil Foto...";
+            uploadMessage.classList.remove('hidden');
+            
+            // Logic Foto
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            // Gambar frame video ke canvas
+            context.drawImage(video, 0, 0, canvas.width, canvas.height); 
+            const imageBase64 = canvas.toDataURL('image/png');
+            
+            // Ganti pesan menjadi "Menyimpan..."
+            uploadMessage.textContent = "Menyimpan...";
+
+            // Logic Upload
+            uploadToDrive(imageBase64);
+        }
+        
+
+        // --- 3. Fungsi Upload ke Backend ---
+        function uploadToDrive(base64Data) {
+            const formData = {
+                image: base64Data
+            };
+
+            fetch(GOOGLE_SCRIPT_URL, {
+                method: "POST",
+                body: JSON.stringify(formData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    console.log("Upload berhasil. URL:", data.url);
+                    // Simpan URL foto terakhir
+                    lastPhotoUrl = data.url; 
+                    displayQrCode(data.url); // Tampilkan QR Code hasil foto (Pojok Kanan Bawah)
+                } else {
+                    console.error("Gagal menyimpan:", data.message);
+                    alert("Gagal menyimpan: " + data.message);
+                    hideQrCode();
+                }
+            })
+            .catch(error => {
+                console.error("Error jaringan/server:", error);
+                alert("Terjadi kesalahan jaringan atau server.");
+                hideQrCode();
+            })
+            .finally(() => {
+                // Sembunyikan loading dan aktifkan tombol kembali
+                loading.classList.add('hidden');
+                snapButton.disabled = false;
+                snapButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                isCountdownActive = false; // Reset status countdown
+                handDetectionIndicator.classList.remove('hidden'); // Tampilkan kembali indikator deteksi
+                handDetectionIndicator.textContent = "Atau tunjukkan jari damai (V) untuk foto otomatis!"; // Pastikan teksnya benar
+            });
+        }
+
+        // --- Fungsi Pembantu: Menampilkan QR Code Hasil Foto ---
+        function displayQrCode(url) {
+            qr.value = url; // Atur nilai QR code
+            
+            // Tampilkan kontainer QR code (Pojok Kanan Bawah)
+            qrCodeContainer.classList.remove('hidden'); 
+        }
+
+        // --- Fungsi Pembantu: Menyembunyikan QR Code Hasil Foto ---
+        function hideQrCode() {
+            // Sembunyikan kontainer QR code (Pojok Kanan Bawah)
+            qrCodeContainer.classList.add('hidden');
+        }
+
+        // Jalankan kamera saat halaman dimuat
+        startCamera();
+    </script>
+</body>
+</html>
